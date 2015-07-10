@@ -56,21 +56,21 @@ class DrsBoard(object):
     def trigger(self):
         return trigger(self.board)
 
-    def measure(self, filename, nevents, channel=0, abort=True, bar=True):
+    def measure(self, filename, nevents, channels=(0,), abort=True, bar=True):
         n = 0
-        self.board.write_header(filename, channel)
+        self.board.write_header(filename, channels)
         # dump first event
         if self.trigger():
-            self.board.get_corrected(channel)
+            self.board.get_corrected(channels[0])
         else:
             print 'no trigger found'
             return
         dt = datetime.now()
         for i in range(nevents):
             if self.trigger():
-                self.board.write_event(filename, channel)
+                self.board.write_event(filename, channels)
                 n += 1
-                if bar:
+                if bar and n % 100 == 0:
                     print_progress(float(n) / nevents)
             else:
                 if abort:
@@ -123,15 +123,3 @@ def print_progress(frac):
     text = '\r[{}] {:.3g}%'.format('#'*block + '-'*(length - block), frac*100)
     stdout.write(text)
     stdout.flush()
-
-
-if __name__ == "__main__":
-    t = time()
-    board = init_board()
-    if board:
-        config = DRSConfig(board)
-        config.apply(board)
-        for i in range(5):
-            if trigger(board, config):
-                board.get_corrected(0)
-                print True
