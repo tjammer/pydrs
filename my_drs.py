@@ -38,8 +38,7 @@ class DRSConfig(object):
         board.set_trigger_polarity(self.tr_polarity)
         if self.tr_level:
             print self.tr_level
-            # 100 is not the correct factor, but it works better than without
-            board.set_trigger_level(self.tr_level * 10)
+            board.set_trigger_level(self.tr_level)
         """# flush first event
         board.start_domino()
         board.transfer_waves()"""
@@ -79,7 +78,7 @@ class DrsBoard(object):
         timedelta = datetime.now() - dt
         if bar:
             print ''
-            print ('{} events recorded in time: {}'
+            print ('{} events recorded in time: {} s'
                    + '\n{:.3g} events per second').format(
                 n, timedelta, n / timedelta.total_seconds())
 
