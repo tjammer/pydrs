@@ -1,0 +1,6 @@
+*.cpp
+*.c
+*.cfg
+*.so
+*.pyc
+build/
