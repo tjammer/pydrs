@@ -4,15 +4,11 @@
 from libcpp cimport bool
 from libc.math cimport fabs
 cimport numpy as np
+cimport cython
+import numpy as npy
 cdef bool can_remove = 1
 from datetime import datetime
 from struct import pack
-try:
-    import numpy as np
-    from scipy.signal import iirfilter, filtfilt
-except:
-    can_remove = 0
-    print 'scipy.signal not found, cannot remove spikes'
 
 
 cdef extern from "DRS.h":
@@ -81,7 +77,7 @@ cdef class PyBoard:
     cdef public int sn, fw
     cdef float data[4][1024]
     cdef float center
-    cdef object arr
+    # cdef np.ndarray[np.float, ndim=2] arr
     cdef readonly bool normaltrigger
     # for filtering when removing spikes
     cdef object ba
@@ -111,8 +107,7 @@ cdef class PyBoard:
 
     def init(self):
         self.board.Init()
-        self.ba = iirfilter(1, 0.4, btype='highpass')
-        self.arr = np.ndarray((4, 1024), dtype='float')
+        # self.arr = npy.zeros((4, 1024), dtype=npy.float32)
 
     def set_frequency(self, freq, wait=True):
         return self.board.SetFrequency(freq, wait)
@@ -163,7 +158,9 @@ cdef class PyBoard:
     def get_stop_cell(self, chip):
         return self.board.GetStopCell(chip)
 
-    def get_waveform(self, unsigned int chip_index, unsigned char channel):
+    @cython.boundscheck(False)
+    cdef get_waveform(self, unsigned int chip_index, unsigned char channel,
+                     float arr[4][1024]):
         assert channel < 4
         # trying new method
         self.board.TransferWaves(self.buf, 0, 8)
@@ -173,23 +170,25 @@ cdef class PyBoard:
 
         cdef int i
         for i in range(1024):
-            self.arr[channel][i] = self.data[channel][i]
+            arr[channel][i] = self.data[channel][i]
 
         # extrapolate first two samples
-        self.arr[1] = 2*self.arr[2] - self.arr[3]
-        self.arr[0] = 2*self.arr[1] - self.arr[2]
+        arr[channel][1] = 2*arr[channel][2] - arr[channel][3]
+        arr[channel][0] = 2*arr[channel][1] - arr[channel][2]
 
         if channel != 3:
             self.board.GetWave(self.buf, chip_index, 6, self.data[3], True,
                                trig_cell, 0, False, 0, True)
 
         for i in range(1024):
-            self.arr[3][i] = self.data[3][i]
-        self.arr[3][1] = 2*self.arr[3][2] - self.arr[3][3]
-        self.arr[3][0] = 2*self.arr[3][1] - self.arr[3][2]
-        return self.arr
+            arr[3][i] = self.data[3][i]
+        arr[3][1] = 2.*arr[3][2] - arr[3][3]
+        arr[3][0] = 2.*arr[3][1] - arr[3][2]
 
-    def get_waveforms(self, unsigned int chip_index, channels):
+    @cython.boundscheck(False)
+    cdef get_waveforms(self, unsigned int chip_index,
+                        np.ndarray[long] channels,
+                      float arr[4][1024]):
         cdef int i, channel
         for channel in channels:
             assert channel < 4
@@ -201,39 +200,46 @@ cdef class PyBoard:
                                self.data[channel], True, trig_cell, 0, False,
                                0, True)
             for i in range(1024):
-                self.arr[channel][i] = self.data[channel][i]
-            self.arr[channel][1] = 2*self.arr[channel][2] - self.arr[channel][3]
-            self.arr[channel][0] = 2*self.arr[channel][1] - self.arr[channel][2]
+                arr[channel][i] = self.data[channel][i]
+            arr[channel][1] = 2*arr[channel][2] - arr[channel][3]
+            arr[channel][0] = 2*arr[channel][1] - arr[channel][2]
 
         if 3 not in channels:
             self.board.GetWave(self.buf, chip_index, 6,
                                self.data[3], True, trig_cell, 0, False,
                                0, True)
             for i in range(1024):
-                self.arr[3][i] = self.data[3][i]
-            self.arr[3][1] = 2*self.arr[3][2] - self.arr[3][3]
-            self.arr[3][0] = 2*self.arr[3][1] - self.arr[3][2]
+                arr[3][i] = self.data[3][i]
+            arr[3][1] = 2.*arr[3][2] - arr[3][3]
+            arr[3][0] = 2.*arr[3][1] - arr[3][2]
 
 
-
-
-    def get_corrected(self, int channel, bool remove=True):
+    cpdef get_corrected(self, int channel, bool remove=True):
         assert channel < 4
-        cdef int i
-        self.get_waveform(0, channel)
-        self.arr = (self.arr / 1000. - self.center + 0.5) * 65535
-        if can_remove and remove:
-            remove_spikes_new(self.arr, (channel,))
+        cdef int i, j
+        cdef float arr[4][1024]
+        self.get_waveform(0, channel, arr)
+        for i in range(1024):
+            for j in range(4):
+                arr[j][i] = (arr[j][i] / 1000. - self.center + 0.5) * 65535
+        if remove:
+            remove_spikes_new(arr, npy.arange(channel,channel+1))
         self.eventnum += 1
-        return self.arr
+        cdef np.ndarray[float] parr = npy.zeros((1024,),
+                                                         dtype=npy.float32)
+        for i in range(1024):
+            parr[i] = arr[channel][i]
+        return parr
 
-    def get_multiple(self, channels):
-        self.get_waveforms(0, channels)
-        self.arr = (self.arr / 1000. - self.center + 0.5) * 65535
-        if can_remove:
-            remove_spikes_new(self.arr, channels)
+
+    cdef get_multiple(self, np.ndarray[long] channels, float arr[4][1024]):
+        cdef int i, j
+        self.get_waveforms(0, channels, arr)
+        for i in range(1024):
+            for j in range(4):
+                arr[j][i] = (arr[j][i] / 1000. - self.center + 0.5) * 65535
+        remove_spikes_new(arr, channels)
         self.eventnum += 1
-        return self.arr
 
 
     def set_domino_mode(self, mode):
@@ -245,56 +251,66 @@ cdef class PyBoard:
             self.arr[i] = self.data[channel][i]
         return self.arr
 
-    def write_header(self, object filename, object channels):
+    def write_header(self, bytes filename, object channels):
         _write_header(self.board, filename, channels)
         self.eventnum = 0
 
-    def write_event(self, object filename, object channels):
-        self.get_multiple(channels)
-        _write_data(self.eventnum, filename, channels, self.board, self.arr)
+    def write_event(self, bytes filename, np.ndarray[long] channels):
+        cdef float arr[4][1024]
+        self.get_multiple(channels, arr)
+        cdef np.ndarray[float, ndim=2] parr = npy.zeros((4, 1024),
+                                                         dtype=npy.float32)
+        cdef int i, j
+        for i in range(4):
+            for j in range(1024):
+                parr[i][j] = arr[i][j]
+        _write_data(self.eventnum, filename, channels, self.board, parr)
 
 
-cdef void remove_spikes(object inarr, object ba, float threshold):
-    ar = filtfilt(ba[0], ba[1], inarr)
-    indices = np.where(ar > threshold)[0]
-    singles = []
-    doubles = []
+cdef void diff(float inarr[1024], float outarr[1023]):
+    cdef int i
+    for i in range(1023):
+        outarr[i] = inarr[i+1] - inarr[i]
 
-    for i, spike in enumerate(zip(ar[indices], ar[indices+1], ar[indices+2])):
-        # single
-        if spike[1] < 1:
-            if not ar[indices[i]-1] > threshold:
-                singles.append(i)
-        # double
-        else:
-            doubles.append(i)
+cdef int where(float inarr[1023], int outarr[1023], float threshold):
+    cdef int i
+    cdef int c = 0
+    for i in range(1023 - 5):
+        if inarr[i] > threshold:
+            outarr[c] = i
+            c += 1
+    return c
 
-    # remove spikes
-    for index in indices[singles]:
-        inarr[index-1:index+2] = (inarr[index - 2] + inarr[index + 3]) / 2.
-    for index in indices[doubles]:
-        inarr[index-1:index+3] = (inarr[index - 2] + inarr[index + 4]) / 2.
-    # print '{} spikes removed'.format(len(singles+doubles))
-    # print indices[singles+doubles]
+@cython.boundscheck(False)
+cdef void remove_spikes_new(float inarr[4][1024],
+                            np.ndarray[long] channels, int ref=3):
+    #cdef np.ndarray[float] arr = npy.diff(inarr[ref][:-5])
+    #cdef np.ndarray[long] indices = npy.where(arr > 600)[0]
+    cdef float diffed[1023]
+    diff(inarr[ref], diffed)
+    cdef int thresholds[1023]
+    cdef int limit = where(diffed, thresholds, 600)
+
+    cdef int chnl, ind, index
+    cdef float val
+    for chnl in channels:
+        for ind in range(limit):
+            index = thresholds[ind]
+            val = (inarr[chnl][index -2] + inarr[chnl][index + 4]) / 2.
+            inarr[chnl][index] = val
+            inarr[chnl][index+1] = val
+            inarr[chnl][index+2] = val
+
+            # inarr[chnl][ind:ind+3] = (inarr[chnl][ind -2] + inarr[chnl][ind + 4]) / 2.
 
 
-cdef void remove_spikes_new(object inarr, object channels, int ref=3):
-    arr = np.diff(inarr[ref][:-5])
-    indices = np.where(arr > 600)[0]
-
-    for channel in channels:
-        for index in indices:
-            inarr[channel][index:index+3] = (inarr[channel][index -2] + inarr[channel][index + 4]) / 2.
-
-
-cdef void _write_header(DRSBoard *board, object filename, object channels):
+cdef void _write_header(DRSBoard *board, bytes filename, object channels):
     cdef float tcal[2048]
     with open(filename, 'wb') as f:
         f.write('TIME')
         f.write('B#')
         f.write(pack('h', board.GetBoardSerialNumber()))
- 
-        
+
         for channel in channels:
             f.write('C00{}'.format(channel + 1))
 
@@ -303,9 +319,11 @@ cdef void _write_header(DRSBoard *board, object filename, object channels):
             timecal = [(tcal[i] + tcal[i+1])/2. for i in range(0, 2048, 2)]
             f.write(pack('f'*1024, *timecal))
 
-
-cdef void _write_data(int eventnum, object filename, object chnls,
-                      DRSBoard *board, object voltages):
+@cython.boundscheck(False)
+cdef void _write_data(int eventnum, bytes filename, np.ndarray[long] chnls,
+                      DRSBoard *board, np.ndarray[float, ndim=2] voltages):
+    cdef int sn = board.GetBoardSerialNumber()
+    cdef int tc = board.GetTriggerCell(0)
     with open(filename, 'ab') as f:
         # event header
         f.write('EHDR')
@@ -316,15 +334,11 @@ cdef void _write_data(int eventnum, object filename, object chnls,
                    date.second, date.microsecond/1000, 0]
         f.write(pack('h'*8, *datearr))
         f.write('B#')
-        f.write(pack('h', board.GetBoardSerialNumber()))
+        f.write(pack('h', sn))
         f.write('T#')
-        f.write(pack('h', board.GetTriggerCell(0)))
+        f.write(pack('h', tc))
         # channel header
         for channel in chnls:
             f.write('C00{}'.format(channel + 1))
-            voltarr = voltages[channel].astype(np.uint16)
+            voltarr = voltages[channel].astype(npy.uint16)
             f.write(voltarr.tostring())
-
-
-
-
