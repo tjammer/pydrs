@@ -11,7 +11,7 @@ from datetime import datetime
 from struct import pack
 
 
-cdef extern from "DRS.h":
+cdef extern from "DRS.h" nogil:
     cdef cppclass DRSBoard:
         int GetBoardSerialNumber()
         int GetFirmwareVersion()
@@ -45,11 +45,16 @@ cdef extern from "DRS.h":
         int GetWaveformBufferSize()
         unsigned char GetStopWSR(unsigned int)
 
-cdef extern from "DRS.h":
+cdef extern from "DRS.h" nogil:
     cdef cppclass DRS:
         DRS() except +
         int GetNumberOfBoards()
         DRSBoard *GetBoard(int)
+
+
+cdef extern from "time.h" nogil:
+    ctypedef int time_t
+    time_t time(time_t *)
 
 
 cdef class PyDRS:
@@ -107,7 +112,6 @@ cdef class PyBoard:
 
     def init(self):
         self.board.Init()
-        # self.arr = npy.zeros((4, 1024), dtype=npy.float32)
 
     def set_frequency(self, freq, wait=True):
         return self.board.SetFrequency(freq, wait)
@@ -159,8 +163,7 @@ cdef class PyBoard:
         return self.board.GetStopCell(chip)
 
     @cython.boundscheck(False)
-    cdef get_waveform(self, unsigned int chip_index, unsigned char channel,
-                     float arr[4][1024]):
+    cdef get_waveform(self, unsigned int chip_index, unsigned char channel):
         assert channel < 4
         # trying new method
         self.board.TransferWaves(self.buf, 0, 8)
@@ -168,27 +171,20 @@ cdef class PyBoard:
         self.board.GetWave(self.buf, chip_index, channel*2, self.data[channel], True,
                            trig_cell, 0, False, 0, True)
 
-        cdef int i
-        for i in range(1024):
-            arr[channel][i] = self.data[channel][i]
-
         # extrapolate first two samples
-        arr[channel][1] = 2*arr[channel][2] - arr[channel][3]
-        arr[channel][0] = 2*arr[channel][1] - arr[channel][2]
+        self.data[channel][1] = 2*self.data[channel][2] - self.data[channel][3]
+        self.data[channel][0] = 2*self.data[channel][1] - self.data[channel][2]
 
         if channel != 3:
             self.board.GetWave(self.buf, chip_index, 6, self.data[3], True,
                                trig_cell, 0, False, 0, True)
 
-        for i in range(1024):
-            arr[3][i] = self.data[3][i]
-        arr[3][1] = 2.*arr[3][2] - arr[3][3]
-        arr[3][0] = 2.*arr[3][1] - arr[3][2]
+        self.data[3][1] = 2.*self.data[3][2] - self.data[3][3]
+        self.data[3][0] = 2.*self.data[3][1] - self.data[3][2]
 
     @cython.boundscheck(False)
     cdef get_waveforms(self, unsigned int chip_index,
-                        np.ndarray[long] channels,
-                      float arr[4][1024]):
+                        np.ndarray[long] channels):
         cdef int i, channel
         for channel in channels:
             assert channel < 4
@@ -199,72 +195,85 @@ cdef class PyBoard:
             self.board.GetWave(self.buf, chip_index, channel*2,
                                self.data[channel], True, trig_cell, 0, False,
                                0, True)
-            for i in range(1024):
-                arr[channel][i] = self.data[channel][i]
-            arr[channel][1] = 2*arr[channel][2] - arr[channel][3]
-            arr[channel][0] = 2*arr[channel][1] - arr[channel][2]
+
+            self.data[channel][1] = 2*self.data[channel][2] - self.data[channel][3]
+            self.data[channel][0] = 2*self.data[channel][1] - self.data[channel][2]
 
         if 3 not in channels:
             self.board.GetWave(self.buf, chip_index, 6,
                                self.data[3], True, trig_cell, 0, False,
                                0, True)
-            for i in range(1024):
-                arr[3][i] = self.data[3][i]
-            arr[3][1] = 2.*arr[3][2] - arr[3][3]
-            arr[3][0] = 2.*arr[3][1] - arr[3][2]
+
+            self.data[3][1] = 2.*self.data[3][2] - self.data[3][3]
+            self.data[3][0] = 2.*self.data[3][1] - self.data[3][2]
 
 
     cpdef get_corrected(self, int channel, bool remove=True):
         assert channel < 4
         cdef int i, j
-        cdef float arr[4][1024]
-        self.get_waveform(0, channel, arr)
+        self.get_waveform(0, channel)
         for i in range(1024):
             for j in range(4):
-                arr[j][i] = (arr[j][i] / 1000. - self.center + 0.5) * 65535
+                self.data[j][i] = (self.data[j][i] / 1000. - self.center + 0.5) * 65535
         if remove:
-            remove_spikes_new(arr, npy.arange(channel,channel+1))
+            remove_spikes_new(self.data, npy.arange(channel,channel+1))
         self.eventnum += 1
         cdef np.ndarray[float] parr = npy.zeros((1024,),
                                                          dtype=npy.float32)
         for i in range(1024):
-            parr[i] = arr[channel][i]
+            parr[i] = self.data[channel][i]
         return parr
 
 
-    cdef get_multiple(self, np.ndarray[long] channels, float arr[4][1024]):
+    cdef _get_multiple(self, np.ndarray[long] channels):
         cdef int i, j
-        self.get_waveforms(0, channels, arr)
+        self.get_waveforms(0, channels)
         for i in range(1024):
             for j in range(4):
-                arr[j][i] = (arr[j][i] / 1000. - self.center + 0.5) * 65535
-        remove_spikes_new(arr, channels)
+                self.data[j][i] = (self.data[j][i] / 1000. - self.center + 0.5) * 65535
+        remove_spikes_new(self.data, channels)
         self.eventnum += 1
 
 
     def set_domino_mode(self, mode):
         self.board.SetDominoMode(mode)
 
-    def _return_orig(self, int channel):
-        cdef int i
-        for i in range(1024):
-            self.arr[i] = self.data[channel][i]
-        return self.arr
-
     def write_header(self, bytes filename, object channels):
         _write_header(self.board, filename, channels)
         self.eventnum = 0
 
     def write_event(self, bytes filename, np.ndarray[long] channels):
-        cdef float arr[4][1024]
-        self.get_multiple(channels, arr)
+        cdef np.ndarray[float, ndim=2] parr = self.get_multiple(channels)
+        _write_data(self.eventnum, filename, channels, self.board, parr)
+
+    cpdef get_multiple(self, np.ndarray[long] channels):
+        self._get_multiple(channels)
         cdef np.ndarray[float, ndim=2] parr = npy.zeros((4, 1024),
                                                          dtype=npy.float32)
         cdef int i, j
         for i in range(4):
             for j in range(1024):
-                parr[i][j] = arr[i][j]
-        _write_data(self.eventnum, filename, channels, self.board, parr)
+                parr[i][j] = self.data[i][j]
+        return parr
+
+    def get_trigger(self):
+        cdef int t
+        self.board.StartDomino()
+        if not self.normaltrigger:
+            self.board.SoftTrigger()
+            while self.board.IsBusy():
+                pass
+            return True
+        else:
+            t = time(NULL)
+            while not self.board.IsEventAvailable() or self.board.IsBusy():
+                if (time(NULL) - t) > 5:
+                    return False
+            return True
+
+    def get_triggered(self, np.ndarray[long] channels):
+        if self.get_trigger():
+            return self.get_multiple(channels)
 
 
 cdef void diff(float inarr[1024], float outarr[1023]):
