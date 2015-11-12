@@ -208,19 +208,38 @@ cdef class PyBoard:
             self.data[3][0] = 2.*self.data[3][1] - self.data[3][2]
 
 
-    cpdef get_raw(self, int channel, bool remove=True):
+    cpdef get_corrected(self, int channel, bool remove=True):
+        assert channel < 4
         cdef int i, j
-        cdef np.ndarray[float] parr = npy.zeros((1024,), dtype=npy.float32)
-        if self.get_trigger():
-            assert channel < 4
-            self.get_waveform(0, channel)
-            if remove:
-                remove_spikes_new(self.data, npy.arange(channel,channel+1))
-            self.eventnum += 1
-            for i in range(1024):
-                parr[i] = self.data[channel][i]
-            return parr
+        self.get_waveform(0, channel)
+        for i in range(1024):
+            for j in range(4):
+                self.data[j][i] = (self.data[j][i] / 1000. - self.center + 0.5) * 65535
+        if remove:
+            remove_spikes_new(self.data, npy.arange(channel,channel+1))
+        self.eventnum += 1
+        cdef np.ndarray[float] parr = npy.zeros((1024,),
+                                                         dtype=npy.float32)
+        for i in range(1024):
+            parr[i] = self.data[channel][i]
+        return parr
 
+    cpdef get_raw(self, int channel, bool remove=True):
+        assert channel < 4
+        cdef int i, j
+        if self.get_trigger():
+        self.get_waveform(0, channel)
+        for i in range(1024):
+            for j in range(4):
+                self.data[j][i] = (self.data[j][i] / 1000. - self.center + 0.5) * 65535
+        if remove:
+            remove_spikes_new(self.data, npy.arange(channel,channel+1))
+        self.eventnum += 1
+        cdef np.ndarray[float] parr = npy.zeros((1024,),
+                                                         dtype=npy.float32)
+        for i in range(1024):
+            parr[i] = self.data[channel][i]
+        return parr
 
     cdef _get_multiple(self, np.ndarray[long] channels):
         cdef int i, j
