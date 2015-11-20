@@ -81,12 +81,12 @@ cdef class PyBoard:
     cdef DRS *drs
     cdef public int sn, fw
     cdef float data[4][1024]
-    cdef float center
+    cdef public float center
     # cdef np.ndarray[np.float, ndim=2] arr
     cdef readonly bool normaltrigger
     # for filtering when removing spikes
     cdef object ba
-    cdef int eventnum
+    cdef public int eventnum
     cdef unsigned char[18432] buf
 
     cdef void from_board(self, DRSBoard *board, DRS *drs):
@@ -140,6 +140,9 @@ cdef class PyBoard:
 
     def set_trigger_level(self, lvl):
         return self.board.SetTriggerLevel(lvl)
+
+    def get_trigger_cell(self):
+        return self.board.GetTriggerCell(0)
 
     def start_domino(self):
         return self.board.StartDomino()
@@ -224,16 +227,17 @@ cdef class PyBoard:
             parr[i] = self.data[channel][i]
         return parr
 
-    cpdef get_raw(self, int channel, bool remove=True):
-        assert channel < 4
+    cpdef get_raw(self, int channel):
+        assert channel < 3
         cdef int i, j
+        cdef np.ndarray[float] parr = npy.zeros((1024,), dtype=npy.float32)
         if self.get_trigger():
             self.get_waveform(0, channel)
-            if remove:
-                remove_spikes_new(self.data, npy.arange(channel,channel+1))
+            for i in range(1024):
+                self.data[channel][i] *= 0.001
+                self.data[3][i] = (self.data[3][i] / 1000. - self.center + 0.5) * 65535
+            remove_spikes_new(self.data, npy.arange(channel,channel+1))
             self.eventnum += 1
-            cdef np.ndarray[float] parr = npy.zeros((1024,),
-                                                             dtype=npy.float32)
             for i in range(1024):
                 parr[i] = self.data[channel][i]
             return parr
