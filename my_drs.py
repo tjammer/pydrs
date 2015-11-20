@@ -3,6 +3,8 @@ from lxml import etree
 from time import time
 from datetime import datetime
 from sys import stdout
+from struct import pack
+import numpy as np
 
 
 class DRSConfig(object):
@@ -82,6 +84,31 @@ class DrsBoard(object):
                    + '\n{:.3g} events per second').format(
                 n, timedelta, n / timedelta.total_seconds())
 
+    def get_raw(self, channel):
+        return self.board.get_raw(channel)
+
+    def write_header(self, filename, channel):
+        self.board.write_header(filename, (channel, ))
+
+    def write_event(self, event, filename, channel):
+        with open(filename, 'ab') as f:
+            f.write('EHDR')
+            f.write(pack('i', self.board.eventnum))
+
+            date = datetime.now()
+            datearr = [date.year, date.month, date.day, date.hour, date.minute,
+                       date.second, date.microsecond/1000, 0]
+            f.write(pack('h'*8, *datearr))
+            f.write('B#')
+            f.write(pack('h', self.board.get_board_serial_number()))
+            f.write('T#')
+            f.write(pack('h', self.board.get_trigger_cell()))
+
+            f.write('C00{}'.format(channel + 1))
+            event = (event / 1000. - self.board.center + 0.5) * 65535
+
+            f.write(event.astype(np.uint16).tostring())
+
 
 def init_board():
     drs = PyDRS()
@@ -104,7 +131,6 @@ def trigger(board):
         board.soft_trigger()
         while board.is_busy():
             pass
-        # board.transfer_waves()
         return True
     else:
         t = time()
@@ -112,7 +138,6 @@ def trigger(board):
             if (time() - t) > 5:
                 print False
                 return False
-        # board.transfer_waves()
         return True
 
 
