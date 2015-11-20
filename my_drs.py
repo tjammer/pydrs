@@ -90,7 +90,7 @@ class DrsBoard(object):
     def write_header(self, filename, channel):
         self.board.write_header(filename, (channel, ))
 
-    def write_event(self, event, filename, channel):
+    def write_raw_event(self, event, filename, channel):
         with open(filename, 'ab') as f:
             f.write('EHDR')
             f.write(pack('i', self.board.eventnum))
@@ -105,7 +105,7 @@ class DrsBoard(object):
             f.write(pack('h', self.board.get_trigger_cell()))
 
             f.write('C00{}'.format(channel + 1))
-            event = (event / 1000. - self.board.center + 0.5) * 65535
+            event = (event - self.board.center + 0.5) * 65535
 
             f.write(event.astype(np.uint16).tostring())
 
