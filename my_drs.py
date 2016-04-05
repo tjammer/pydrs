@@ -5,6 +5,7 @@ from datetime import datetime
 from sys import stdout
 from struct import pack
 import numpy as np
+from tqdm import tqdm
 
 
 class DRSConfig(object):
@@ -57,8 +58,8 @@ class DrsBoard(object):
     def trigger(self):
         return trigger(self.board)
 
-    def measure(self, filename, nevents, channels=(0,), abort=True, bar=True):
-        n = 0
+    def measure_multiple(self, filename, nevents, channels=np.arange(1),
+                         abort=True):
         self.board.write_header(filename, channels)
         # dump first event
         if self.trigger():
@@ -66,23 +67,20 @@ class DrsBoard(object):
         else:
             print 'no trigger found'
             return
-        dt = datetime.now()
-        for i in range(nevents):
-            if self.trigger():
-                self.board.write_event(filename, channels)
-                n += 1
-                if bar and n % 100 == 0:
-                    print_progress(float(n) / nevents)
-            else:
+        for i in tqdm(range(nevents)):
+            if not self.board.write_event(filename, channels):
                 if abort:
                     print 'no trigger found, aborting measurement'
                     break
-        timedelta = datetime.now() - dt
-        if bar:
-            print ''
-            print ('{} events recorded in time: {} s'
-                   + '\n{:.3g} events per second').format(
-                n, timedelta, n / timedelta.total_seconds())
+
+    def measure_single_channel(self, filename, nevents, channel):
+        self.write_header(filename, channel)
+        for i in tqdm(range(nevents)):
+            self.write_raw_event(self.get_raw(channel), filename, channel)
+
+    # for compability
+    def measure(self, *args, **kwargs):
+        self.measure_multiple(*args, **kwargs)
 
     def get_raw(self, channel):
         return self.board.get_raw(channel)

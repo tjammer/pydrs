@@ -260,8 +260,12 @@ cdef class PyBoard:
         self.eventnum = 0
 
     def write_event(self, bytes filename, np.ndarray[long] channels):
-        cdef np.ndarray[float, ndim=2] parr = self.get_multiple(channels)
-        _write_data(self.eventnum, filename, channels, self.board, parr)
+        cdef np.ndarray[float, ndim=2] parr
+        if self.get_trigger():
+            parr = self.get_multiple(channels)
+            _write_data(self.eventnum, filename, channels, self.board, parr)
+            return True
+        return False
 
     cpdef get_multiple(self, np.ndarray[long] channels):
         self._get_multiple(channels)
