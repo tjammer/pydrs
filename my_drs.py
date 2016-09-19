@@ -40,7 +40,7 @@ class DRSConfig(object):
         board.set_trigger_delay_percent(self.tr_delay)
         board.set_trigger_polarity(self.tr_polarity)
         if self.tr_level:
-            print self.tr_level
+            print(self.tr_level)
             board.set_trigger_level(self.tr_level)
         """# flush first event
         board.start_domino()
@@ -60,17 +60,18 @@ class DrsBoard(object):
 
     def measure_multiple(self, filename, nevents, channels=np.arange(1),
                          abort=True):
+        filename = filename.encode('ASCII')
         self.board.write_header(filename, channels)
         # dump first event
         if self.trigger():
             self.board.get_corrected(channels[0])
         else:
-            print 'no trigger found'
+            print('no trigger found')
             return
         for i in tqdm(range(nevents)):
             if not self.board.write_event(filename, channels):
                 if abort:
-                    print 'no trigger found, aborting measurement'
+                    print('no trigger found, aborting measurement')
                     break
 
     def measure_single_channel(self, filename, nevents, channel):
@@ -86,23 +87,23 @@ class DrsBoard(object):
         return self.board.get_raw(channel)
 
     def write_header(self, filename, channel):
-        self.board.write_header(filename, (channel, ))
+        self.board.write_header(filename.encode('ASCII'), (channel, ))
 
     def write_raw_event(self, event, filename, channel):
         with open(filename, 'ab') as f:
-            f.write('EHDR')
-            f.write(pack('i', self.board.eventnum))
+            f.write(b'EHDR')
+            f.write(pack(b'i', self.board.eventnum))
 
             date = datetime.now()
             datearr = [date.year, date.month, date.day, date.hour, date.minute,
-                       date.second, date.microsecond/1000, 0]
-            f.write(pack('h'*8, *datearr))
-            f.write('B#')
-            f.write(pack('h', self.board.get_board_serial_number()))
-            f.write('T#')
-            f.write(pack('h', self.board.get_trigger_cell()))
+                       date.second, date.microsecond // 1000, 0]
+            f.write(pack(b'h' * 8, *datearr))
+            f.write(b'B#')
+            f.write(pack(b'h', self.board.get_board_serial_number()))
+            f.write(b'T#')
+            f.write(pack(b'h', self.board.get_trigger_cell()))
 
-            f.write('C00{}'.format(channel + 1))
+            f.write('C00{}'.format(channel + 1).encode('ASCII'))
             event = (event - self.board.center + 0.5) * 65535
 
             f.write(event.astype(np.uint16).tostring())
@@ -115,8 +116,8 @@ def init_board():
         board = drs.get_board(0)
         sn = board.get_board_serial_number()
         fw = board.get_firmware_version()
-        print ('found board with serial number #{} ' +
-               'and firmware version {}.').format(sn, fw)
+        print(('found board with serial number #{} ' +
+               'and firmware version {}.').format(sn, fw))
         return board
     else:
         return None
@@ -134,7 +135,7 @@ def trigger(board):
         t = time()
         while not board.is_event_available() or board.is_busy():
             if (time() - t) > 5:
-                print False
+                print(False)
                 return False
         return True
 

@@ -337,12 +337,12 @@ cdef void remove_spikes_new(float inarr[4][1024],
 cdef void _write_header(DRSBoard *board, bytes filename, object channels):
     cdef float tcal[2048]
     with open(filename, 'wb') as f:
-        f.write('TIME')
-        f.write('B#')
-        f.write(pack('h', board.GetBoardSerialNumber()))
+        f.write(b'TIME')
+        f.write(b'B#')
+        f.write(pack(b'h', board.GetBoardSerialNumber()))
 
         for channel in channels:
-            f.write('C00{}'.format(channel + 1))
+            f.write('C00{}'.format(channel + 1).encode('ASCII'))
 
             # get time calibration
             board.GetTimeCalibration(0, channel*2, 0, tcal, 0)
@@ -356,19 +356,19 @@ cdef void _write_data(int eventnum, bytes filename, np.ndarray[long] chnls,
     cdef int tc = board.GetTriggerCell(0)
     with open(filename, 'ab') as f:
         # event header
-        f.write('EHDR')
-        f.write(pack('i', eventnum))
+        f.write(b'EHDR')
+        f.write(pack(b'i', eventnum))
 
         date = datetime.now()
         datearr = [date.year, date.month, date.day, date.hour, date.minute,
-                   date.second, date.microsecond/1000, 0]
-        f.write(pack('h'*8, *datearr))
-        f.write('B#')
-        f.write(pack('h', sn))
-        f.write('T#')
-        f.write(pack('h', tc))
+                   date.second, date.microsecond // 1000, 0]
+        f.write(pack(b'h'*8, *datearr))
+        f.write(b'B#')
+        f.write(pack(b'h', sn))
+        f.write(b'T#')
+        f.write(pack(b'h', tc))
         # channel header
         for channel in chnls:
-            f.write('C00{}'.format(channel + 1))
+            f.write('C00{}'.format(channel + 1).encode('ASCII'))
             voltarr = voltages[channel].astype(npy.uint16)
             f.write(voltarr.tostring())
